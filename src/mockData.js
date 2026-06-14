@@ -5,7 +5,7 @@
 export const TENANT = {
   name: 'Acme Corp',
   licensedSeats: 69,
-  pool: 5000, // lifetime contractual pool, tenant-level
+  pool: 10000, // lifetime contractual pool, tenant-level
   budgetUSD: 5000, // dollar value of the pool — shown as primary metric on tile 2
   amberBand: 75, // % — display-only colour bands
   redBand: 90,
@@ -69,7 +69,7 @@ export const USERS = FIRST.map((fn, i) => {
   let events = []
   if (i < 12) {
     // power users: 292–462 interactions spread across the window (pool ~91% consumed, red band)
-    const total = 255 + Math.floor(rand() * 170)
+    const total = 600 + Math.floor(rand() * 170)
     for (let n = 0; n < total; n++) {
       const d = new Date(GO_LIVE.getTime() + Math.floor(rand() * DAYS) * 86400000)
       events.push(dateStr(d))

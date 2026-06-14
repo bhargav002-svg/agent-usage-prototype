@@ -6,6 +6,7 @@ export const TENANT = {
   name: 'Acme Corp',
   licensedSeats: 69,
   pool: 5000, // lifetime contractual pool, tenant-level
+  budgetUSD: 5000, // dollar value of the pool — shown as primary metric on tile 2
   amberBand: 75, // % — display-only colour bands
   redBand: 90,
 }
@@ -21,6 +22,18 @@ export const GROUPS = [
   { group: 'Customer Support', superGroup: 'Service Delivery' },
   { group: 'Tech Support L2', superGroup: 'Service Delivery' },
 ]
+
+const ROLES = ['Analyst','Senior Analyst','Associate','Senior Associate','Manager','Senior Manager','Specialist','Lead','Consultant','Executive']
+const LOCATIONS = ['Bangalore','Mumbai','Hyderabad','Chennai','Pune','Delhi']
+const MANAGERS = ['Sunita Rajan','Arjun Pillai','Deepa Menon','Rajesh Iyer','Kavitha Nair']
+const DEPARTMENTS = {
+  'Claims Ops': 'Claims & Risk',
+  'Underwriting': 'Risk & Underwriting',
+  'Finance Shared Services': 'Finance',
+  'HR Services': 'Human Resources',
+  'Customer Support': 'Customer Experience',
+  'Tech Support L2': 'Information Technology',
+}
 
 // Deterministic pseudo-random so the prototype renders the same numbers every load.
 function mulberry32(a) {
@@ -44,10 +57,19 @@ function dateStr(d) { return d.toISOString().slice(0, 10) }
 export const USERS = FIRST.map((fn, i) => {
   const name = `${fn} ${LAST[i % LAST.length]}`
   const g = GROUPS[i % GROUPS.length]
+  const employeeId = 'EMP-' + String(1001 + i).padStart(4, '0')
+  const role = ROLES[i % ROLES.length]
+  const department = DEPARTMENTS[g.group]
+  const location = LOCATIONS[i % LOCATIONS.length]
+  const manager = MANAGERS[i % MANAGERS.length]
+  // date joined: between 2020-01-01 and go-live
+  const joinBase = new Date('2020-01-01').getTime()
+  const joinRange = GO_LIVE.getTime() - joinBase
+  const dateJoined = dateStr(new Date(joinBase + Math.floor(rand() * joinRange)))
   let events = []
   if (i < 12) {
     // power users: 292–462 interactions spread across the window (pool ~91% consumed, red band)
-    const total = 292 + Math.floor(rand() * 170)
+    const total = 255 + Math.floor(rand() * 170)
     for (let n = 0; n < total; n++) {
       const d = new Date(GO_LIVE.getTime() + Math.floor(rand() * DAYS) * 86400000)
       events.push(dateStr(d))
@@ -65,9 +87,15 @@ export const USERS = FIRST.map((fn, i) => {
     id: i + 1,
     name,
     email: `${fn.toLowerCase()}.${LAST[i % LAST.length].toLowerCase()}@acme.example`,
+    employeeId,
+    role,
+    department,
+    location,
+    manager,
+    dateJoined,
     group: g.group,
     superGroup: g.superGroup,
-    events, // one entry per interaction (yyyy-mm-dd)
+    events,
   }
 })
 

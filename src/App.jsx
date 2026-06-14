@@ -1,7 +1,85 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { TENANT, USERS, GROUPS, GO_LIVE_STR, TODAY_STR } from './mockData.js'
 
 const fmt = (n) => n.toLocaleString('en-IN')
+const fmtUSD = (n) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+
+// ---------- Column definitions ----------
+
+export const ALL_COLUMNS = [
+  { key: 'name',        label: 'Name',               locked: true },
+  { key: 'employeeId',  label: 'Employee ID' },
+  { key: 'role',        label: 'Designation / Role' },
+  { key: 'group',       label: 'User group' },
+  { key: 'superGroup',  label: 'Super group' },
+  { key: 'department',  label: 'Department' },
+  { key: 'location',    label: 'Location' },
+  { key: 'manager',     label: 'Manager' },
+  { key: 'dateJoined',  label: 'Date joined' },
+  { key: 'consumed',    label: 'Interactions' },
+  { key: 'pct',         label: '% of total usage' },
+  { key: 'lastUsed',    label: 'Last used' },
+]
+
+const DEFAULT_VISIBLE = ['name', 'group', 'consumed', 'pct', 'lastUsed']
+const STORAGE_KEY = 'ph_agent_usage_cols'
+
+function loadCols() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      const saved = JSON.parse(raw)
+      // validate: must be array of known keys
+      if (Array.isArray(saved) && saved.every(k => ALL_COLUMNS.some(c => c.key === k))) return saved
+    }
+  } catch {}
+  return DEFAULT_VISIBLE
+}
+
+// ---------- Column chooser ----------
+
+function ColumnChooser({ visible, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    function handler(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const toggle = (key) => {
+    const next = visible.includes(key) ? visible.filter(k => k !== key) : [...visible, key]
+    // preserve column order from ALL_COLUMNS
+    onChange(ALL_COLUMNS.map(c => c.key).filter(k => next.includes(k)))
+  }
+
+  return (
+    <div className="col-chooser" ref={ref}>
+      <button className="btn col-chooser-btn" onClick={() => setOpen(o => !o)}>
+        Columns <span className="col-count">{visible.length - 1}</span> ▾
+      </button>
+      {open && (
+        <div className="col-panel">
+          <div className="col-panel-head">Show / hide columns</div>
+          {ALL_COLUMNS.map(col => (
+            <label key={col.key} className={`col-row${col.locked ? ' locked' : ''}`}>
+              <input
+                type="checkbox"
+                checked={visible.includes(col.key)}
+                disabled={col.locked}
+                onChange={() => toggle(col.key)}
+              />
+              {col.label}
+              {col.locked && <span className="col-locked-tag">always on</span>}
+            </label>
+          ))}
+          <button className="col-reset" onClick={() => onChange(DEFAULT_VISIBLE)}>Reset to default</button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ---------- shared computation ----------
 
@@ -12,7 +90,6 @@ function useFilteredUsers(filters) {
       return {
         ...u,
         consumed: inWindow.length,
-        firstUsed: inWindow[0] || null,
         lastUsed: inWindow[inWindow.length - 1] || null,
         lifetimeConsumed: u.events.length,
       }
@@ -25,50 +102,53 @@ function useFilteredUsers(filters) {
   }, [filters])
 }
 
-// ---------- KPI tiles (US-1) ----------
+// ---------- KPI tiles ----------
 
 function KpiTiles({ users }) {
   const active = users.filter((u) => u.consumed > 0).length
   const consumed = users.reduce((s, u) => s + u.consumed, 0)
-  // Pool consumption is lifetime by definition (lifetime contractual pool)
   const lifetimeConsumed = USERS.reduce((s, u) => s + u.events.length, 0)
   const pct = Math.round((lifetimeConsumed / TENANT.pool) * 1000) / 10
   const band = pct > TENANT.redBand ? 'red' : pct >= TENANT.amberBand ? 'amber' : ''
   const avg = active ? Math.round(consumed / active) : 0
+  const dollarSpent = Math.round((lifetimeConsumed / TENANT.pool) * TENANT.budgetUSD)
+  const dollarRemaining = TENANT.budgetUSD - dollarSpent
 
   return (
     <div className="tiles">
       <div className="tile">
         <span className="prio">P0 · US-1.1</span>
-        <div className="label">Users used / licenses bought</div>
+        <div className="label">Active users / licenses bought</div>
         <div className="value">{active} <small>/ {TENANT.licensedSeats}</small> <span className="pct-big">({Math.round((active / TENANT.licensedSeats) * 100)}%)</span></div>
         <div className="sub">Adoption breadth — share of licensed seats active in scope</div>
         <div className="meter"><div style={{ width: `${(active / TENANT.licensedSeats) * 100}%` }} /></div>
       </div>
       <div className={`tile ${band}`}>
         <span className="prio">P0 · US-1.2</span>
-        <div className="label">Interactions consumed / total pool</div>
-        <div className="value">{fmt(lifetimeConsumed)} <small>/ {fmt(TENANT.pool)}</small> <span className="pct-big">({Math.round(pct)}%)</span></div>
-        <div className="sub">{Math.round(pct)}% consumed · {fmt(TENANT.pool - lifetimeConsumed)} remaining (lifetime pool — colour shifts at {TENANT.amberBand}% / {TENANT.redBand}%)</div>
+        <div className="label">Budget consumed</div>
+        <div className="value">{fmtUSD(dollarSpent)} <small>/ {fmtUSD(TENANT.budgetUSD)}</small> <span className="pct-big">({Math.round(pct)}%)</span></div>
+        <div className="sub tile-sub-detail">
+          <span>{fmtUSD(dollarRemaining)} remaining · colour shifts at {TENANT.amberBand}% / {TENANT.redBand}%</span>
+          <span className="interactions-sub">{fmt(lifetimeConsumed)} / {fmt(TENANT.pool)} interactions</span>
+        </div>
         <div className="meter"><div style={{ width: `${pct}%` }} /></div>
       </div>
       <div className="tile">
         <span className="prio">P1 · US-1.3</span>
-        <div className="label">Avg interactions per user</div>
+        <div className="label">Avg interactions per active user</div>
         <div className="value">{avg}</div>
-        <div className="sub">Usage depth · denominator = active users (default, to confirm) · {fmt(consumed)} interactions in scope</div>
+        <div className="sub">Usage depth · denominator = active users (confirm) · {fmt(consumed)} interactions in scope</div>
       </div>
     </div>
   )
 }
 
-// ---------- Filters (US-2.2) ----------
+// ---------- Filters ----------
 
 function FilterBar({ filters, setFilters }) {
   const superGroups = [...new Set(GROUPS.map((g) => g.superGroup))]
   const groups = GROUPS.filter((g) => filters.superGroup === 'All' || g.superGroup === filters.superGroup).map((g) => g.group)
   const isDefault = filters.from === GO_LIVE_STR && filters.to === TODAY_STR && filters.superGroup === 'All' && filters.group === 'All' && filters.user === 'All'
-
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v, ...(k === 'superGroup' ? { group: 'All', user: 'All' } : {}), ...(k === 'group' ? { user: 'All' } : {}) }))
 
   return (
@@ -85,7 +165,7 @@ function FilterBar({ filters, setFilters }) {
           {superGroups.map((s) => <option key={s}>{s}</option>)}
         </select>
       </label>
-      <label>User group / team
+      <label>User group
         <select value={filters.group} onChange={(e) => set('group', e.target.value)}>
           <option>All</option>
           {groups.map((g) => <option key={g}>{g}</option>)}
@@ -107,31 +187,64 @@ function FilterBar({ filters, setFilters }) {
   )
 }
 
-// ---------- Main user list (US-2) ----------
+// ---------- Main table ----------
 
 const PIVOTS = [
-  { key: 'user', label: 'User' },
-  { key: 'group', label: 'User group' },
+  { key: 'user',       label: 'User' },
+  { key: 'group',      label: 'User group' },
   { key: 'superGroup', label: 'Super group' },
 ]
 
 const PAGE_SIZES = [25, 50, 100]
 
-function exportCsv(rows, pivot) {
+// Render a cell value for a given column key on a user-pivot row
+function cellValue(col, r) {
+  switch (col) {
+    case 'name':       return <>{r.name}{r.email && <span className="email">{r.email}</span>}</>
+    case 'employeeId': return <span className="chip gray">{r.employeeId}</span>
+    case 'role':       return r.role
+    case 'group':      return <span className="chip">{r.group}</span>
+    case 'superGroup': return <span className="chip gray">{r.superGroup}</span>
+    case 'department': return r.department
+    case 'location':   return r.location
+    case 'manager':    return r.manager
+    case 'dateJoined': return r.dateJoined
+    case 'consumed':
+      return r.consumed === 0
+        ? <span className="tag-zero">0 — not used</span>
+        : <span className="interactions-val">{fmt(r.consumed)}</span>
+    case 'pct':        return `${r.pct}%`
+    case 'lastUsed':   return r.lastUsed || '—'
+    default:           return '—'
+  }
+}
+
+function exportCsv(rows, pivot, visibleCols) {
   const isUser = pivot === 'user'
-  const header = isUser
-    ? ['Name', 'Email', 'User group', 'Super group', 'Interactions', 'First used', 'Last used', '% of total']
-    : ['Name', ...(pivot === 'group' ? ['Super group'] : []), 'Licences bought', 'Active users', 'Interactions', 'First used', 'Last used', '% of total']
-  const lines = rows.map((r) => {
-    const cells = isUser
-      ? [r.name, r.email, r.groups[0], r.groups[1], r.consumed, r.firstUsed || '', r.lastUsed || '', r.pct + '%']
-      : [r.name, ...(pivot === 'group' ? [r.groups[0]] : []), r.licences, r.activeUsers, r.consumed, r.firstUsed || '', r.lastUsed || '', r.pct + '%']
-    return cells.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')
-  })
+  let header, lines
+  if (isUser) {
+    const cols = ALL_COLUMNS.filter(c => visibleCols.includes(c.key))
+    header = cols.map(c => c.label)
+    lines = rows.map(r => cols.map(c => {
+      const v = c.key === 'pct' ? r.pct + '%' : (r[c.key] ?? '')
+      return `"${String(v).replace(/"/g, '""')}"`
+    }).join(','))
+  } else {
+    const groupCols = pivot === 'group'
+      ? ['Name', 'Super group', 'Licences bought', 'Active users', 'Interactions', '% of total usage', 'Last used']
+      : ['Name', 'Licences bought', 'Active users', 'Interactions', '% of total usage', 'Last used']
+    header = groupCols
+    lines = rows.map(r => {
+      const base = pivot === 'group'
+        ? [r.name, r.groups[0], r.licences, r.activeUsers, r.consumed, r.pct + '%', r.lastUsed || '']
+        : [r.name, r.licences, r.activeUsers, r.consumed, r.pct + '%', r.lastUsed || '']
+      return base.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
+    })
+  }
   const blob = new Blob([[header.join(','), ...lines].join('\n')], { type: 'text/csv' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
-  a.download = `agent-consumption-by-${pivot}.csv`
+  a.download = `agent-usage-by-${pivot}.csv`
   a.click()
   URL.revokeObjectURL(a.href)
 }
@@ -141,28 +254,30 @@ function MainTable({ users }) {
   const [sort, setSort] = useState({ col: 'consumed', dir: 'desc' })
   const [pageSize, setPageSize] = useState(25)
   const [page, setPage] = useState(0)
+  const [visibleCols, setVisibleCols] = useState(loadCols)
 
   const setPivot = (p) => { setPivotRaw(p); setPage(0) }
+
+  const onColChange = (cols) => {
+    setVisibleCols(cols)
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cols)) } catch {}
+  }
 
   const totalConsumed = users.reduce((s, u) => s + u.consumed, 0)
 
   const rows = useMemo(() => {
     let r
     if (pivot === 'user') {
-      r = users.map((u) => ({
-        key: u.id, name: u.name, email: u.email, groups: [u.group, u.superGroup],
-        consumed: u.consumed, firstUsed: u.firstUsed, lastUsed: u.lastUsed,
-      }))
+      r = users.map((u) => ({ ...u, consumed: u.consumed }))
     } else {
       const map = new Map()
       for (const u of users) {
         const k = u[pivot]
-        if (!map.has(k)) map.set(k, { key: k, name: k, email: null, groups: pivot === 'group' ? [u.superGroup] : [], licences: 0, activeUsers: 0, consumed: 0, firstUsed: null, lastUsed: null })
+        if (!map.has(k)) map.set(k, { key: k, name: k, groups: pivot === 'group' ? [u.superGroup] : [], licences: 0, activeUsers: 0, consumed: 0, lastUsed: null })
         const row = map.get(k)
         row.licences++
         if (u.consumed > 0) row.activeUsers++
         row.consumed += u.consumed
-        if (u.firstUsed && (!row.firstUsed || u.firstUsed < row.firstUsed)) row.firstUsed = u.firstUsed
         if (u.lastUsed && (!row.lastUsed || u.lastUsed > row.lastUsed)) row.lastUsed = u.lastUsed
       }
       r = [...map.values()]
@@ -183,14 +298,19 @@ function MainTable({ users }) {
   const pageRows = rows.slice(safePage * pageSize, (safePage + 1) * pageSize)
 
   const onSort = (col) => setSort((s) => ({ col, dir: s.col === col && s.dir === 'desc' ? 'asc' : 'desc' }))
-  const arrow = (col) => (sort.col === col ? (sort.dir === 'desc' ? ' ▾' : ' ▴') : '')
+  const arrow = (col) => sort.col === col ? (sort.dir === 'desc' ? ' ▾' : ' ▴') : ''
+
+  // Columns to render for the current pivot
+  const activeCols = pivot === 'user'
+    ? ALL_COLUMNS.filter(c => visibleCols.includes(c.key))
+    : null // group pivots use fixed columns
 
   return (
     <div className="card">
       <div className="card-head">
         <div>
-          <h2>Consumption by {PIVOTS.find((p) => p.key === pivot).label.toLowerCase()} <span className="spec-ref">US-2 · P0</span></h2>
-          <p className="desc">Every licensed {pivot === 'user' ? 'user' : 'entity'} in scope, including zero-usage rows. Click a column header to sort (default: consumption descending).</p>
+          <h2>Usage by {PIVOTS.find((p) => p.key === pivot).label.toLowerCase()} <span className="spec-ref">US-2 · P0</span></h2>
+          <p className="desc">Every licensed {pivot === 'user' ? 'user' : 'entity'} in scope, including zero-usage rows. Click a column header to sort.</p>
         </div>
         <div className="hero-actions">
           <div className="pivot">
@@ -198,39 +318,65 @@ function MainTable({ users }) {
               <button key={p.key} className={pivot === p.key ? 'active' : ''} onClick={() => setPivot(p.key)}>{p.label}</button>
             ))}
           </div>
-          <button className="btn" onClick={() => exportCsv(rows, pivot)}>Export CSV</button>
+          {pivot === 'user' && (
+            <ColumnChooser visible={visibleCols} onChange={onColChange} />
+          )}
+          <button className="btn" onClick={() => exportCsv(rows, pivot, visibleCols)}>Export CSV</button>
         </div>
       </div>
+
       <table>
         <thead>
           <tr>
-            <th onClick={() => onSort('name')}>Name{arrow('name')}</th>
-            {pivot === 'user' && <th>Group(s)</th>}
-            {pivot === 'group' && <th>Super group</th>}
-            {pivot !== 'user' && <th className="num" onClick={() => onSort('licences')}>Licences bought{arrow('licences')}</th>}
-            {pivot !== 'user' && <th className="num" onClick={() => onSort('activeUsers')}>Active users{arrow('activeUsers')}</th>}
-            <th className="num" onClick={() => onSort('consumed')}>Interactions{arrow('consumed')}</th>
-            <th onClick={() => onSort('firstUsed')}>First used{arrow('firstUsed')}</th>
-            <th onClick={() => onSort('lastUsed')}>Last used{arrow('lastUsed')}</th>
-            <th className="num">% of total in scope</th>
+            {pivot === 'user' ? (
+              activeCols.map(col => (
+                <th key={col.key}
+                  className={col.key === 'consumed' ? 'interactions-col' : col.key === 'pct' ? 'num' : ''}
+                  onClick={() => onSort(col.key)}>
+                  {col.label}{arrow(col.key)}
+                </th>
+              ))
+            ) : (
+              <>
+                <th onClick={() => onSort('name')}>Name{arrow('name')}</th>
+                {pivot === 'group' && <th>Super group</th>}
+                <th className="num" onClick={() => onSort('licences')}>Licences bought{arrow('licences')}</th>
+                <th className="num" onClick={() => onSort('activeUsers')}>Active users{arrow('activeUsers')}</th>
+                <th className="interactions-col" onClick={() => onSort('consumed')}>Interactions{arrow('consumed')}</th>
+                <th className="num" onClick={() => onSort('pct')}>% of total usage{arrow('pct')}</th>
+                <th onClick={() => onSort('lastUsed')}>Last used{arrow('lastUsed')}</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
           {pageRows.map((r) => (
-            <tr key={r.key} className={r.consumed === 0 ? 'zero' : ''}>
-              <td className="name-cell">{r.name}{r.email && <span className="email">{r.email}</span>}</td>
-              {pivot === 'user' && <td>{r.groups.map((g) => <span key={g} className="chip">{g}</span>)}</td>}
-              {pivot === 'group' && <td>{r.groups.map((g) => <span key={g} className="chip gray">{g}</span>)}</td>}
-              {pivot !== 'user' && <td className="num">{r.licences}</td>}
-              {pivot !== 'user' && <td className="num">{r.activeUsers}</td>}
-              <td className="num">{r.consumed === 0 ? <span className="tag-zero">0 — not used</span> : fmt(r.consumed)}</td>
-              <td>{r.firstUsed || '—'}</td>
-              <td>{r.lastUsed || '—'}</td>
-              <td className="num">{r.pct}%<span className="pct-bar"><div style={{ width: `${Math.min(r.pct, 100)}%` }} /></span></td>
+            <tr key={r.key ?? r.id} className={r.consumed === 0 ? 'zero' : ''}>
+              {pivot === 'user' ? (
+                activeCols.map(col => (
+                  <td key={col.key}
+                    className={col.key === 'name' ? 'name-cell' : col.key === 'consumed' ? 'interactions-col' : col.key === 'pct' ? 'num' : ''}>
+                    {cellValue(col.key, r)}
+                  </td>
+                ))
+              ) : (
+                <>
+                  <td className="name-cell">{r.name}</td>
+                  {pivot === 'group' && <td>{r.groups.map(g => <span key={g} className="chip gray">{g}</span>)}</td>}
+                  <td className="num">{r.licences}</td>
+                  <td className="num">{r.activeUsers}</td>
+                  <td className="interactions-col">
+                    {r.consumed === 0 ? <span className="tag-zero">0 — not used</span> : <span className="interactions-val">{fmt(r.consumed)}</span>}
+                  </td>
+                  <td className="num">{r.pct}%</td>
+                  <td>{r.lastUsed || '—'}</td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
+
       <div className="table-footer">
         <span className="count-note">
           Showing {rows.length === 0 ? 0 : safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, rows.length)} of {rows.length} · {fmt(totalConsumed)} interactions in scope
@@ -250,7 +396,7 @@ function MainTable({ users }) {
   )
 }
 
-// ---------- V2 preview (US-4 / US-5) ----------
+// ---------- V2 preview ----------
 
 function V2Preview() {
   const sample = USERS.slice(0, 10).map((u) => ({ ...u, consumed: u.events.length }))
@@ -261,14 +407,14 @@ function V2Preview() {
   return (
     <>
       <div className="v2-banner">
-        <strong>V2 preview — not in V1 scope.</strong> Mocked controls to communicate direction: per-user interaction limits within the pool (US-4) and enable/disable per user or group (US-5). Threshold alerts (US-6) are TBD, pending notification-service dependency.
+        <strong>V2 preview — not in V1 scope.</strong> Per-user interaction limits (US-4) and enable/disable per user or group (US-5). Threshold alerts (US-6) TBD.
       </div>
       <div className="card">
         <h2>Per-user controls <span className="spec-ref">US-4 · US-5 — V2</span></h2>
         <p className="desc">When a user hits their cap, their access blocks while others continue. Toggling a user off denies access with the admin-set message below.</p>
         <table>
           <thead>
-            <tr><th>Name</th><th>Group</th><th className="num">Consumed</th><th className="num">Per-user cap</th><th>Agent enabled</th><th>Status</th></tr>
+            <tr><th>Name</th><th>User group</th><th className="num">Consumed</th><th className="num">Per-user cap</th><th>Agent enabled</th><th>Status</th></tr>
           </thead>
           <tbody>
             {sample.map((u) => {
@@ -300,7 +446,7 @@ function V2Preview() {
       </div>
       <div className="card">
         <h2>End-user blocked-state message</h2>
-        <p className="desc">What a disabled/capped user sees when they open the Agent. Message is admin-configurable (US-5). Tenant-wide pool exhaustion uses the pre-built block behaviour (out of scope here).</p>
+        <p className="desc">What a disabled/capped user sees when they open the Agent. Message is admin-configurable (US-5).</p>
         <input style={{ width: '100%', fontSize: 13, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 7 }}
           value={blockMsg} onChange={(e) => setBlockMsg(e.target.value)} />
         <div className="blocked-demo">
@@ -323,17 +469,17 @@ export default function App() {
     <div className="app">
       <div className="topbar">
         <h1>ProHance Agent Usage</h1>
-        <span className="tenant">{TENANT.name} · Customer Admin view · pool: {fmt(TENANT.pool)} lifetime interactions</span>
+        <span className="tenant">{TENANT.name} · Customer Admin view · pool: {fmt(TENANT.pool)} interactions · {fmtUSD(TENANT.budgetUSD)} budget</span>
       </div>
       <p className="subtitle">Prototype for spec walkthrough — mock data. Flow: KPI tiles → full user list.</p>
       <div className="tabs">
-        <button className={tab === 'v1' ? 'active' : ''} onClick={() => setTab('v1')}>Consumption<span className="badge">V1</span></button>
+        <button className={tab === 'v1' ? 'active' : ''} onClick={() => setTab('v1')}>Usage<span className="badge">V1</span></button>
         <button className={tab === 'v2' ? 'active' : ''} onClick={() => setTab('v2')}>Controls<span className="badge v2">V2 preview</span></button>
       </div>
       {tab === 'v1' ? (
         <>
           <FilterBar filters={filters} setFilters={setFilters} />
-          <p className="filter-note">Tiles and the list recompute within the filtered scope (US-2.2). Pool-consumption tile always shows lifetime pool position.</p>
+          <p className="filter-note">Tiles and the list recompute within the filtered scope (US-2.2). Budget tile always shows lifetime pool position.</p>
           <KpiTiles users={users} />
           <MainTable users={users} />
         </>

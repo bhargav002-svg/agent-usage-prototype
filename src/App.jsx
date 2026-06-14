@@ -331,7 +331,7 @@ function MainTable({ users }) {
             {pivot === 'user' ? (
               activeCols.map(col => (
                 <th key={col.key}
-                  className={col.key === 'consumed' ? 'interactions-col' : col.key === 'pct' ? 'num' : ''}
+                  className={col.key === 'consumed' ? 'interactions-col' : col.key === 'pct' ? 'center' : ''}
                   onClick={() => onSort(col.key)}>
                   {col.label}{arrow(col.key)}
                 </th>
@@ -343,7 +343,7 @@ function MainTable({ users }) {
                 <th className="num" onClick={() => onSort('licences')}>Licences bought{arrow('licences')}</th>
                 <th className="num" onClick={() => onSort('activeUsers')}>Active users{arrow('activeUsers')}</th>
                 <th className="interactions-col" onClick={() => onSort('consumed')}>Interactions{arrow('consumed')}</th>
-                <th className="num" onClick={() => onSort('pct')}>% of total usage{arrow('pct')}</th>
+                <th className="center" onClick={() => onSort('pct')}>% of total usage{arrow('pct')}</th>
                 <th onClick={() => onSort('lastUsed')}>Last used{arrow('lastUsed')}</th>
               </>
             )}
@@ -355,7 +355,7 @@ function MainTable({ users }) {
               {pivot === 'user' ? (
                 activeCols.map(col => (
                   <td key={col.key}
-                    className={col.key === 'name' ? 'name-cell' : col.key === 'consumed' ? 'interactions-col' : col.key === 'pct' ? 'num' : ''}>
+                    className={col.key === 'name' ? 'name-cell' : col.key === 'consumed' ? 'interactions-col' : col.key === 'pct' ? 'center' : ''}>
                     {cellValue(col.key, r)}
                   </td>
                 ))
@@ -368,7 +368,7 @@ function MainTable({ users }) {
                   <td className="interactions-col">
                     {r.consumed === 0 ? <span className="tag-zero">0 — not used</span> : <span className="interactions-val">{fmt(r.consumed)}</span>}
                   </td>
-                  <td className="num">{r.pct}%</td>
+                  <td className="center">{r.pct}%</td>
                   <td>{r.lastUsed || '—'}</td>
                 </>
               )}
